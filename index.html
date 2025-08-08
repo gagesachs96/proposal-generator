@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proposal Generator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #ffffff;
+            color: #333;
+        }
+        header {
+            background-color: {{ brand_blue }};
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        section {
+            padding: 20px;
+            margin: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        h2 {
+            margin-top: 0;
+            color: {{ brand_blue }};
+        }
+        #moduleList, #builderList {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+            min-height: 50px;
+        }
+        li.module-item {
+            border: 1px solid #ccc;
+            background-color: #f9f9f9;
+            margin-bottom: 5px;
+            padding: 8px;
+            cursor: move;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        li.module-item.dragging {
+            opacity: 0.5;
+        }
+        .module-name {
+            flex-grow: 1;
+        }
+        .include-toggle {
+            margin-left: 10px;
+        }
+        button {
+            background-color: {{ brand_blue }};
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        form input[type="text"], form input[type="date"] {
+            padding: 6px;
+            margin: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .small-note {
+            font-size: 0.85em;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Proposal Generator</h1>
+    </header>
+
+    <section id="library">
+        <h2>Library</h2>
+        <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+            <input type="file" name="files" multiple accept="application/pdf">
+            <button type="submit">Upload PDFs</button>
+        </form>
+        <p class="small-note">Uploaded modules are stored permanently.</p>
+        <ul id="moduleList">
+            {% for f in files %}
+            <li>{{ f }}</li>
+            {% endfor %}
+        </ul>
+    </section>
+
+    <section id="cover">
+        <h2>Cover Page</h2>
+        <form id="coverForm">
+            <input type="text" name="title" placeholder="Proposal Title" value="Proposal">
+            <input type="text" name="client_name" placeholder="Client Name" required>
+            <input type="text" name="created_by" placeholder="Created By" required>
+            <input type="date" name="date" value="{{ today }}" required>
+            <button type="button" id="coverBtn">Generate Cover</button>
+        </form>
+        <div id="coverStatus"></div>
+    </section>
+
+    <section id="builder">
+        <h2>Build Proposal</h2>
+        <p>Select modules to include and drag to reorder them.</p>
+        <ul id="builderList"></ul>
+        <button id="exportBtn">Export PDF</button>
+        <div id="exportStatus"></div>
+    </section>
+
+    <script>
+        const uploadForm = document.getElementById('uploadForm');
+        const moduleList = document.getElementById('moduleList');
+        const builderList = document.getElementById('builderList');
+        const coverBtn = document.getElementById('coverBtn');
+        const coverStatus = document.getElementById('coverStatus');
+        const exportBtn = document.getElementById('exportBtn');
+        const exportStatus = document.getElementById('exportStatus');
+        let coverFile = null;
+
+        // fetch existing modules and populate lists
+        function refreshModules() {
+            fetch('/list_modules')
+                .then(res => res.json())
+                .then(files => {
+                    moduleList.innerHTML = '';
+                    builderList.innerHTML = '';
+                    files.forEach(fname => {
+                        const li = document.createElement('li');
+                        li.textContent = fname;
+                        moduleList.appendChild(li);
+
+                        const li2 = document.createElement('li');
+                        li2.className = 'module-item';
+                        li2.draggable = true;
+                        li2.dataset.name = fname;
+                        const span = document.createElement('span');
+                        span.textContent = fname;
+                        span.className = 'module-name';
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'include-toggle';
+                        checkbox.checked = true;
+                        li2.appendChild(span);
+                        li2.appendChild(checkbox);
+                        builderList.appendChild(li2);
+                    });
+                    addDragListeners();
+                });
+        }
+
+        // drag and drop ordering
+        function addDragListeners() {
+            let draggedItem = null;
+            builderList.querySelectorAll('li.module-item').forEach(item => {
+                item.addEventListener('dragstart', (e) => {
+                    draggedItem = item;
+                    item.classList.add('dragging');
+                });
+                item.addEventListener('dragend', (e) => {
+                    item.classList.remove('dragging');
+                });
+                item.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    const dragging = builderList.querySelector('.dragging');
+                    const afterElement = getDragAfterElement(builderList, e.clientY);
+                    if (afterElement == null) {
+                        builderList.appendChild(dragging);
+                    } else {
+                        builderList.insertBefore(dragging, afterElement);
+                    }
+                });
+            });
+        }
+
+        function getDragAfterElement(container, y) {
+            const draggableElements = [...container.querySelectorAll('li.module-item:not(.dragging)')];
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        uploadForm.addEventListener('submit', function (e) {
+            e.preventDefault();
+            const formData = new FormData(uploadForm);
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            }).then(res => res.json())
+              .then(data => {
+                  refreshModules();
+              }).catch(err => console.error(err));
+        });
+
+        coverBtn.addEventListener('click', function () {
+            const formData = new FormData(document.getElementById('coverForm'));
+            const data = {};
+            formData.forEach((value, key) => data[key] = value);
+            coverStatus.textContent = 'Generating cover...';
+            fetch('/generate_cover', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            }).then(res => res.json())
+              .then(res => {
+                  coverFile = res.cover;
+                  coverStatus.innerHTML = 'Cover generated successfully.';
+              }).catch(err => {
+                  coverStatus.textContent = 'Error generating cover.';
+              });
+        });
+
+        exportBtn.addEventListener('click', function () {
+            // gather selected files in order
+            const items = builderList.querySelectorAll('li.module-item');
+            const files = [];
+            items.forEach(item => {
+                const checkbox = item.querySelector('input.include-toggle');
+                if (checkbox.checked) {
+                    files.push(item.dataset.name);
+                }
+            });
+            if (files.length === 0) {
+                exportStatus.textContent = 'Select at least one module.';
+                return;
+            }
+            exportStatus.textContent = 'Exporting...';
+            fetch('/export', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ files: files, cover: coverFile })
+            }).then(res => res.json())
+              .then(res => {
+                  const link = document.createElement('a');
+                  link.href = `/download/exports/${res.export}`;
+                  link.textContent = 'Download Proposal';
+                  link.download = res.export;
+                  exportStatus.innerHTML = '';
+                  exportStatus.appendChild(link);
+              }).catch(err => {
+                  exportStatus.textContent = 'Error exporting PDF.';
+              });
+        });
+
+        // initial load
+        refreshModules();
+    </script>
+</body>
+</html>
